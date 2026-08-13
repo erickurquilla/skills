@@ -34,14 +34,16 @@ export OMPI_MCA_btl_vader_single_copy_mechanism=none
 | No Docker `/EOS` `/NuLib` | ParmParse CLI overrides for Fermi only (below). Never edit `sample_inputs/`. Do not create root `/EOS` `/NuLib` unless user approves sudo. |
 | No multi-rank CI | Run `./main3d....ex ../sample_inputs/<inputs>` directly. Never `mpirun -np 4`. Fallback only: `mpirun -np 1`. |
 | `Exec/GNUmakefile` drifts | Stage 0 always: `cp ../makefiles/GNUmakefile_jenkins_HDF5_CUDA GNUmakefile` then rebuild. Do not use `GNUmakefile_cassowary` for this skill. |
+| Leftover `plt*` in `Exec/` | Stage 0 always: `rm -rf plt*` after the build, before any IC/sim/test. Prior-session plotfiles false-fail glob tests (gotcha 4). |
 
 ## PREFLIGHT / FLAVOR MATRIX
 
-Working trees get rebuilt between chats. **Do not assume** a prior stage’s exe remains.
+Working trees get rebuilt between chats. **Do not assume** a prior stage’s exe remains, and **do not assume** `Exec/` is free of leftover `plt*`.
 
 ```bash
 grep -E '^NUM_FLAVORS|^USE_CUDA|^SET_EQUILIBRIUM|^AMREX_CUDA_ARCH' GNUmakefile | head -10
 ls -l main3d.gnu.TPROF.MPI.CUDA.ex main3d.gnu.TPROF.MPI.ex 2>/dev/null
+ls -d plt[0-9]* 2>/dev/null | wc -l   # must be 0 before Stage 1; Stage 0 wipes these
 ```
 
 | Stages | Build needed |
@@ -95,8 +97,8 @@ Always `make realclean` when switching makefile, `NUM_FLAVORS`, or `SET_EQUILIBR
 1. **`write_particles_all_domain.py` → `../Scripts/data_reduction/` only** (not `initial_conditions/`). Wrong path → no `plt*.h5` → `fermi_dirac_test.py` numpy crash on empty glob.
 2. **Plot I/O is binary even with HDF5 makefile** (`IO.cpp` `#undef AMREX_USE_HDF5`). Sims write `pltNNNNN/` dirs. Stages **9, 12, 13** must run `write_particles_all_domain.py` after sim, before test (`yt` required in venv).
 3. **Fermi order:** IC → rhoYeT writer → sim (+ table CLI) → `write_particles` → `fermi_dirac_test.py` → cleanup. Expect `completed ---> plt00000/06000` and `plt*.h5`.
-4. **Stage 14 needs CUDA 3F** left from Stage 11. Clear `rm -rf plt*` first (stale `plt*.old.*` false-fails the test).
-5. **Cleanup is last** in each stage. Never delete `plt*` before that stage’s tests finish.
+4. **Leftover `plt*` false-fails glob tests.** `msw_test.py` (and similar) does `nfiles = len(glob.glob("plt[0-9][0-9][0-9][0-9][0-9]"))` then reads `plt00000`…`plt{nfiles-1}` sequentially. Stale `plt00060`–`plt01000` from prior runs inflate `nfiles` → `FileNotFoundError: plt00051/neutrinos/Header`. Stage 0 always `rm -rf plt*` after the build. Stage 14 also `rm -rf plt*` first (`plt*.old.*` same failure mode).
+5. **Cleanup is last** in each stage. Never delete `plt*` before that stage’s tests finish. Session-start wipe is Stage 0 only.
 6. **Script roots from `Exec/`:** `initial_conditions/` · `tests/` · `data_reduction/` · `babysitting/` under `../Scripts/`.
 7. **Batching tip:** shell batches `0–6`, `7–9`, `10–15` with `set -o pipefail` and stop-on-first-fail work well; keep `/tmp/ci_s*_*.log` for diagnosis only (not reports).
 
@@ -128,6 +130,7 @@ cp ../makefiles/GNUmakefile_jenkins_HDF5_CUDA GNUmakefile
 make realclean
 make generate NUM_FLAVORS=2
 make -j NUM_FLAVORS=2 AMREX_CUDA_ARCH=70
+rm -rf plt*
 ```
 
 ### 1. MSW
